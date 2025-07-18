@@ -1,6 +1,8 @@
 #include "iGraphics.h"
 
 // ==================== Function Prototypes ====================
+void LoadResources();
+void loadExplosionFrames();
 void iFilledTriangle(double x1, double y1, double x2, double y2, double x3, double y3);
 void initializeBossSystem();
 void drawMainMenu();
@@ -20,12 +22,13 @@ void handleMegaBomb();
 void handleBossMechanics();
 void drawGameOverScreen();
 void loadScores();
+void createScoreAnim(int x, int y, int value);
 void drawScoreboardScreen();
 void drawHelpPage();
 void iDraw();
 void iMouse(int button, int state, int mx, int my);
-void iKeyboard(unsigned char key);
-void iSpecialKeyboard(unsigned char key);
+void iKeyboard(unsigned char, int);
+void iSpecialKeyboard(unsigned char, int);
 void iMouseDrag(int mx, int my);
 void iMouseMove(int mx, int my);
 void iMouseWheel(int button, int dir, int mx);
@@ -35,12 +38,10 @@ int main(int argc, char *argv[]);
 template <typename Callback>
 void moveAndCheckPickup(bool *active, int *x, int *y, int size, const char *label, Callback onPickup);
 
-#include "iGraphics.h"
-
 // ==================== Screen & Menu ====================
-int screenWidth = 800;
-int screenHeight = 600;
-int currentMenu = 0; // 0 = Main Menu, 1 = Name Input
+int screenWidth = 1500; // Default width, can be adjusted
+int screenHeight = 850; // Default height, can be adjusted
+int currentMenu = 0;    // 0 = Main Menu, 1 = Name Input
 
 // ==================== Player Info ======================
 char playerName[100] = "";
@@ -51,8 +52,8 @@ const int totalShips = 3;
 
 // ==================== Player Ship ======================
 int playerX = 400;
-int playerY = 50;
-int playerSpeed = 10;
+int playerY = 100;
+int playerSpeed = 35;
 
 // ==================== Bullets ==========================
 const int maxBullets = 100;
@@ -66,7 +67,7 @@ const int maxEnemies = 10;
 int enemyX[maxEnemies];
 int enemyY[maxEnemies];
 bool enemyActive[maxEnemies];
-int enemySpeed = 2;
+int enemySpeed = 0.5;
 enum EnemyType
 {
     NORMAL,
@@ -75,11 +76,25 @@ enum EnemyType
 };
 EnemyType enemyType[maxEnemies];
 
+// ==================== Explosion ========================
+const int maxExplosions = 50;
+Image explosionFrames[7]; // Load these once
+int totalExplosionFrames = 7;
+
+struct Explosion
+{
+    int x, y;
+    int frameIndex;
+    bool active;
+};
+
+Explosion explosions[maxExplosions];
+
 // ==================== Player Stats =====================
-int playerLife = 3;
+int playerLife = 5;
 bool isGameOver = false;
-int playerHealth = 100; // 100% health
-const int maxHealth = 100;
+int playerHealth = 500; // 100% health
+const int maxHealth = 500;
 
 // ==================== UI Buttons =======================
 int buttonWidth = 200;
@@ -91,6 +106,17 @@ int buttonGap = 70;
 // ==================== Score & Pause ====================
 int score = 0;
 bool isPaused = false;
+const int maxScoreAnims = 20;
+
+struct ScoreAnim
+{
+    int x, y;
+    int value;
+    int timer; // lifespan in frames
+    bool active;
+};
+
+ScoreAnim scoreAnims[maxScoreAnims];
 
 // ==================== Power-Ups ========================
 bool healthPackActive = false;
@@ -138,6 +164,14 @@ int bossBulletY[10];
 bool bossBulletActive[10];
 int bossFireTimer = 0;
 
+// powerups countdown
+int powerupCooldown = 0; // controls how often any power-up can appear
+int healthCooldown = 0;
+int multiplierCooldown = 0;
+int armorCooldown = 0;
+int rapidCooldown = 0;
+int bombCooldown = 0;
+
 // ==================== Scoreboard =======================
 struct ScoreEntry
 {
@@ -154,6 +188,51 @@ const char *menuItems[] = {
     "About",
     "Exit"};
 const int menuCount = sizeof(menuItems) / sizeof(menuItems[0]);
+
+// ==================== Image Declaration =========================
+
+Image playerShip;
+Image enemy;
+Image bomb;
+Image armor;
+Image HP;
+Image bullet;
+Image maingamebackground;
+
+// ==================== Game Initialization ====================
+void LoadResources()
+{
+    iLoadImage(&bullet, "assets/bullet.png");
+    iResizeImage(&bullet, 10, 20);
+
+    iLoadImage(&maingamebackground, "assets/backgrounds/background_01.jpg");
+    iResizeImage(&maingamebackground, screenWidth, screenHeight);
+
+    iLoadImage(&enemy, "assets/enemy.png");
+    iResizeImage(&enemy, 40, 40);
+
+    iLoadImage(&playerShip, "assets/spaceship_01.png");
+    iResizeImage(&playerShip, 150, 150);
+
+    iLoadImage(&bomb, "assets/bomb.png");
+    iResizeImage(&bomb, 150, 150);
+
+    iLoadImage(&armor, "assets/armor.png");
+    iResizeImage(&armor, 50, 50);
+
+    iLoadImage(&HP, "assets/health_pack.png");
+    iResizeImage(&HP, 50, 50);
+}
+
+void loadExplosionFrames()
+{
+    for (int i = 0; i < totalExplosionFrames; i++)
+    {
+        char path[100];
+        sprintf(path, "assets/explosions/Explosion%d.png", i+1);
+        iLoadImage(&explosionFrames[i], path);
+    }
+}
 
 void iFilledTriangle(double x1, double y1, double x2, double y2, double x3, double y3)
 {
@@ -279,6 +358,19 @@ void checkBulletEnemyCollision()
                         bulletActive[i] = false;
                         enemyActive[j] = false;
                         score += 10 * scoreMultiplierValue;
+                        createScoreAnim(enemyX[j] + 10, enemyY[j] + 20, 10); // place +10 above enemy
+
+                        for (int k = 0; k < maxExplosions; k++)
+                        {
+                            if (!explosions[k].active)
+                            {
+                                explosions[k].x = enemyX[j];
+                                explosions[k].y = enemyY[j];
+                                explosions[k].frameIndex = 0;
+                                explosions[k].active = true;
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -320,11 +412,9 @@ void updateBullets()
         {
             int oldY = bulletY[i];
             bulletY[i] += bulletSpeed;
-            printf("[DEBUG] updateBullets: bullet %d moved from %d to %d\n", i, oldY, bulletY[i]);
             if (bulletY[i] > screenHeight)
             {
                 bulletActive[i] = false;
-                printf("[DEBUG] updateBullets: bullet %d deactivated (out of screen)\n", i);
             }
         }
     }
@@ -334,56 +424,92 @@ void updateBullets()
 
 void gameLoop(void)
 {
-    printf("[DEBUG] gameLoop check: menu=%d, paused=%d, gameOver=%d\n", currentMenu, isPaused, isGameOver);
     if (currentMenu == 4 && !isPaused && !isGameOver)
     {
-        printf("[DEBUG] gameLoop running: updating bullets and enemies\n");
+
         updateBullets();
         updateEnemies();
+        if(isKeyPressed(' ')) {
+            
+    
+       int bulletsPerShot = rapidFireActive ? 3 : 1;
+
+            int bulletsFired = 0;
+            for (int i = 0; i < maxBullets && bulletsFired < bulletsPerShot; i++)
+            {
+                if (!bulletActive[i])
+                {
+                    bulletX[i] = playerX;
+                    // + 37 + (bulletsFired * 5);
+                    bulletY[i] = playerY + 75;
+                    bulletActive[i] = true;
+                    bulletsFired++;
+                }
+        }
+    }
+            
+    {
+        if (isSpecialKeyPressed(GLUT_KEY_LEFT) && playerX > 0)
+            playerX -= playerSpeed;
+        if (isSpecialKeyPressed(GLUT_KEY_RIGHT) && playerX < screenWidth - 80)
+            playerX += playerSpeed;
+        if (isSpecialKeyPressed(GLUT_KEY_UP) && playerY < screenHeight - 100)
+            playerY += playerSpeed;
+        if (isSpecialKeyPressed(GLUT_KEY_DOWN) && playerY > 0)
+            playerY -= playerSpeed;
+    }
     }
 }
+
 
 void drawGameScreen()
 {
 
-    printf("[DEBUG] drawGameScreen called, selectedLevel: %d\n", selectedLevel);
-    if (selectedLevel == 1)
-    {
-        iSetColor(10, 10, 30);
-        iFilledRectangle(0, 0, screenWidth, screenHeight);
-    }
-    else if (selectedLevel == 2)
-    {
-        iSetColor(20, 50, 80);
-        iFilledRectangle(0, 0, screenWidth, screenHeight);
-    }
-    else if (selectedLevel == 3)
-    {
-        iSetColor(50, 20, 50);
-        iFilledRectangle(0, 0, screenWidth, screenHeight);
-    }
-    else if (selectedLevel == 4)
-    {
-        iSetColor(70, 40, 10);
-        iFilledRectangle(0, 0, screenWidth, screenHeight);
-    }
-    else
-    {
-        iSetColor(5, 5, 5); // Darkest for Level 5 (Boss Level)
-        iFilledRectangle(0, 0, screenWidth, screenHeight);
-        iSetColor(255, 0, 0);
-        iText(screenWidth / 2 - 50, screenHeight / 2, "BOSS LEVEL", GLUT_BITMAP_HELVETICA_18);
-    }
+    // if (selectedLevel == 1)
+    // {
+    //     iSetColor(10, 10, 30);
+    //     iFilledRectangle(0, 0, screenWidth, screenHeight);
+    //     // iShowLoadedImage(0, 0, &background[0]); // Background for Level 1
+    // }
+    // else if (selectedLevel == 2)
+    // {
+    //     iSetColor(10, 10, 30);
+    //     iFilledRectangle(0, 0, screenWidth, screenHeight);
+    //     // iShowLoadedImage(0, 0, &background[0]); // Background for Level 2
+    // }
+    // else if (selectedLevel == 3)
+    // {
+    //     iSetColor(10, 10, 30);
+    //     iFilledRectangle(0, 0, screenWidth, screenHeight);
+    //     // iShowLoadedImage(0, 0, &background[0]); // Background for Level 3
+    // }
+    // else if (selectedLevel == 4)
+    // {
+    //     iSetColor(10, 10, 30);
+    //     iFilledRectangle(0, 0, screenWidth, screenHeight);
+    //     // iShowLoadedImage(0, 0, &background[0]); // Background for Level 4
+    // }
+    // else
+    // {
+    //     iSetColor(10, 10, 30);
+    //     iFilledRectangle(0, 0, screenWidth, screenHeight);
+    //     // iShowLoadedImage(0, 0, &background[0]); // Background for Boss Level
+    //     iSetColor(255, 0, 0);
+    //     iText(screenWidth / 2 - 50, screenHeight / 2, "BOSS LEVEL", GLUT_BITMAP_HELVETICA_18);
+    // }
+
+    iShowLoadedImage(0, 0, &maingamebackground); // Draw background
 
     // // Background
     // iSetColor(10, 10, 30);
     // iFilledRectangle(0, 0, screenWidth, screenHeight);
 
     // Draw player spaceship
-    iSetColor(255, 100, 0);
-    iFilledTriangle(playerX, playerY,
-                    playerX + 40, playerY + 60,
-                    playerX + 80, playerY);
+    // iSetColor(255, 100, 0);
+    // iFilledTriangle(playerX, playerY,
+    //                 playerX + 40, playerY + 60,
+    //                 playerX + 80, playerY);
+    iShowLoadedImage(playerX, playerY, &playerShip);
 
     // Draw bullets
     iSetColor(255, 255, 0);
@@ -391,8 +517,8 @@ void drawGameScreen()
     {
         if (bulletActive[i])
         {
-            printf("[DEBUG] Drawing bullet %d at (%d, %d)\n", i, bulletX[i], bulletY[i]);
-            iFilledRectangle(bulletX[i], bulletY[i], 5, 10);
+            // iFilledRectangle(bulletX[i], bulletY[i], 5, 10);
+            iShowLoadedImage(bulletX[i], bulletY[i], &bullet);
         }
     }
 
@@ -407,45 +533,54 @@ void drawGameScreen()
     {
         if (enemyActive[i])
         {
-            printf("[DEBUG] Drawing enemy %d at (%d, %d)\n", i, enemyX[i], enemyY[i]);
             if (enemyType[i] == NORMAL)
                 iSetColor(200, 0, 0);
             else if (enemyType[i] == SHOOTER)
-                iSetColor(255, 100, 0);
+                iSetColor(0, 200, 0);
             else if (enemyType[i] == FAST)
-                iSetColor(0, 200, 200);
+                iSetColor(0, 0, 200);
 
-            iFilledRectangle(enemyX[i], enemyY[i], 40, 40);
+            // iFilledRectangle(enemyX[i], enemyY[i], 40, 40);
+            iShowLoadedImage(enemyX[i], enemyY[i], &enemy);
+        }
+    }
+    // Draw Explosions
+    for (int i = 0; i < maxExplosions; i++)
+    {
+        if (explosions[i].active)
+        {
+            iShowLoadedImage(explosions[i].x, explosions[i].y, &explosionFrames[explosions[i].frameIndex]);
         }
     }
 
     if (healthPackActive)
     {
-        iSetColor(0, 255, 0); // Green box
-        iFilledRectangle(healthPackX, healthPackY, healthPackSize, healthPackSize);
+        // iSetColor(0, 255, 0); // Green box
+        // iFilledRectangle(healthPackX, healthPackY, healthPackSize, healthPackSize);
 
-        iSetColor(255, 255, 255);
-        iText(healthPackX + 5, healthPackY + 10, "+HP", GLUT_BITMAP_HELVETICA_12);
+        // iSetColor(255, 255, 255);
+        // iText(healthPackX + 5, healthPackY + 10, "+HP", GLUT_BITMAP_HELVETICA_12);
+        iShowLoadedImage(healthPackX, healthPackY, &HP);
     }
 
     char scoreStr[50];
     sprintf(scoreStr, "Score: %d", score);
-    iText(10, screenHeight - 50, scoreStr, GLUT_BITMAP_HELVETICA_18);
+    iText(50, screenHeight - 150, scoreStr, GLUT_BITMAP_HELVETICA_18);
 
     // Health Bar
     iSetColor(255, 255, 255);
-    iText(screenWidth - 180, screenHeight - 30, "Health:", GLUT_BITMAP_HELVETICA_18);
+    iText(250, screenHeight - 80, "Health:", GLUT_BITMAP_HELVETICA_18);
 
     iSetColor(0, 255, 0);
-    iFilledRectangle(screenWidth - 110, screenHeight - 35, playerHealth, 15);
+    iFilledRectangle(200, screenHeight - 100, playerHealth, 15);
 
     // Life Icons (already present)
     iSetColor(255, 255, 255);
-    iText(10, screenHeight - 60, "Lives:", GLUT_BITMAP_HELVETICA_18);
+    iText(50, screenHeight - 200, "Lives:", GLUT_BITMAP_HELVETICA_18);
     for (int i = 0; i < playerLife; i++)
     {
         iSetColor(255, 0, 0);
-        iFilledRectangle(80 + i * 20, screenHeight - 65, 15, 15);
+        iFilledRectangle(150 + i * 20, screenHeight - 200, 15, 15);
     }
 
     if (multiplierActive)
@@ -466,10 +601,11 @@ void drawGameScreen()
 
     if (armorPackActive)
     {
-        iSetColor(0, 200, 255); // Light blue
-        iFilledRectangle(armorX, armorY, armorSize, armorSize);
-        iSetColor(255, 255, 255);
-        iText(armorX + 5, armorY + 10, "ARM", GLUT_BITMAP_HELVETICA_12);
+        // iSetColor(0, 200, 255); // Light blue
+        // iFilledRectangle(armorX, armorY, armorSize, armorSize);
+        // iSetColor(255, 255, 255);
+        // iText(armorX + 5, armorY + 10, "ARM", GLUT_BITMAP_HELVETICA_12);
+        iShowLoadedImage(armorX, armorY, &armor);
     }
 
     if (armorActive)
@@ -487,15 +623,16 @@ void drawGameScreen()
 
     if (rapidFireActive)
     {
-        iText(screenWidth / 2 - 100, screenHeight - 80, "RAPID FIRE!", GLUT_BITMAP_HELVETICA_18);
+        iText(screenWidth / 2 - 100, screenHeight / 2, "RAPID FIRE!", GLUT_BITMAP_HELVETICA_18);
     }
 
     if (megaBombPackActive)
     {
-        iSetColor(255, 0, 255); // Magenta
-        iFilledRectangle(megaBombX, megaBombY, megaBombSize, megaBombSize);
-        iSetColor(255, 255, 255);
-        iText(megaBombX + 2, megaBombY + 10, "BOMB", GLUT_BITMAP_HELVETICA_12);
+        // iSetColor(255, 0, 255); // Magenta
+        // iFilledRectangle(megaBombX, megaBombY, megaBombSize, megaBombSize);
+        // iSetColor(255, 255, 255);
+        // iText(megaBombX + 2, megaBombY + 10, "BOMB", GLUT_BITMAP_HELVETICA_12);
+        iShowLoadedImage(megaBombX, megaBombY, &bomb);
     }
 
     if (bossActive)
@@ -530,15 +667,36 @@ void drawGameScreen()
         iSetColor(255, 255, 255);
         iText(screenWidth / 2 - 60, screenHeight / 2, "GAME PAUSED", GLUT_BITMAP_TIMES_ROMAN_24);
     }
+
+    for (int i = 0; i < maxScoreAnims; i++)
+    {
+        if (scoreAnims[i].active)
+        {
+            char txt[10];
+            sprintf(txt, "+%d", scoreAnims[i].value);
+            iSetColor(255, 255, 0); // Yellow
+            iText(scoreAnims[i].x, scoreAnims[i].y, txt, GLUT_BITMAP_HELVETICA_18);
+        }
+    }
 }
 
 void spawnPowerUps()
 {
+    int totalPowerUps = healthPackActive + multiplierActive + armorPackActive + rapidFirePackActive + megaBombPackActive;
+
+    if (totalPowerUps >= 2)
+        return; // skip spawning
+
+    if (powerupCooldown > 0)
+        powerupCooldown--;
+
     if (!healthPackActive && rand() % 100 < 10)
     {
         healthPackX = rand() % (screenWidth - healthPackSize);
         healthPackY = screenHeight + rand() % 300;
         healthPackActive = true;
+        healthCooldown = 500; // ~8 seconds
+        powerupCooldown = 100;
     }
 
     if (!multiplierActive && rand() % 100 < 5)
@@ -546,6 +704,8 @@ void spawnPowerUps()
         multiplierX = rand() % (screenWidth - multiplierSize);
         multiplierY = screenHeight + rand() % 300;
         multiplierActive = true;
+        multiplierCooldown = 800;
+        powerupCooldown = 100;
     }
 
     if (!armorPackActive && rand() % 100 < 5)
@@ -553,6 +713,8 @@ void spawnPowerUps()
         armorX = rand() % (screenWidth - armorSize);
         armorY = screenHeight + rand() % 300;
         armorPackActive = true;
+        armorCooldown = 800;
+        powerupCooldown = 100;
     }
 
     if (!rapidFirePackActive && rand() % 100 < 5)
@@ -560,6 +722,8 @@ void spawnPowerUps()
         rapidX = rand() % (screenWidth - rapidSize);
         rapidY = screenHeight + rand() % 300;
         rapidFirePackActive = true;
+        rapidCooldown = 800;
+        powerupCooldown = 100;
     }
 
     if (!megaBombPackActive && rand() % 100 < 3)
@@ -567,6 +731,8 @@ void spawnPowerUps()
         megaBombX = rand() % (screenWidth - megaBombSize);
         megaBombY = screenHeight + rand() % 300;
         megaBombPackActive = true;
+        bombCooldown = 1000;
+        powerupCooldown = 100;
     }
 }
 
@@ -599,7 +765,6 @@ void spawnEnemy()
             else
                 enemyType[i] = NORMAL;
 
-            printf("[DEBUG] spawnEnemy: enemy %d spawned at (%d, %d), type: %d\n", i, enemyX[i], enemyY[i], enemyType[i]);
             break;
         }
     }
@@ -612,7 +777,7 @@ void moveEnemies()
 {
     for (int i = 0; i < maxEnemies; i++)
     {
-        if (enemyActive[i])
+        if (enemyActive[i] && !isPaused)
         {
             int thisSpeed = (enemyType[i] == FAST) ? enemySpeed + 2 : enemySpeed;
             enemyY[i] -= thisSpeed;
@@ -679,7 +844,7 @@ void moveAndCheckPickup(bool *active, int *x, int *y, int size, const char *labe
 {
     if (*active)
     {
-        *y -= 3;
+        *y -= 5;
         if (*y < 0)
         {
             *active = false;
@@ -778,11 +943,47 @@ void updateEnemies()
 {
     if (isPaused)
         return;
-    printf("[DEBUG] updateEnemies called\n");
     moveEnemies();
     handlePowerUps();
     handleMegaBomb();
     handleBossMechanics();
+
+    // score animations
+    for (int i = 0; i < maxScoreAnims; i++)
+    {
+        if (scoreAnims[i].active)
+        {
+            scoreAnims[i].y += 1; // move up
+            scoreAnims[i].timer -= 1;
+            if (scoreAnims[i].timer <= 0)
+                scoreAnims[i].active = false;
+        }
+    }
+
+    // explosions
+    for (int i = 0; i < maxExplosions; i++)
+    {
+        if (explosions[i].active)
+        {
+            explosions[i].frameIndex++;
+            if (explosions[i].frameIndex >= totalExplosionFrames)
+            {
+                explosions[i].active = false;
+            }
+        }
+    }
+
+    // cooldown for power-ups
+    if (healthCooldown > 0)
+        healthCooldown--;
+    if (multiplierCooldown > 0)
+        multiplierCooldown--;
+    if (armorCooldown > 0)
+        armorCooldown--;
+    if (rapidCooldown > 0)
+        rapidCooldown--;
+    if (bombCooldown > 0)
+        bombCooldown--;
 }
 
 void drawGameOverScreen()
@@ -795,7 +996,26 @@ void drawGameOverScreen()
     sprintf(msg, "Player: %s   Level: %d", playerName, selectedLevel);
     iText(screenWidth / 2 - 80, screenHeight / 2, msg);
 
+    sprintf(msg, "Score: %d", score);
+    iText(screenWidth / 2 - 80, screenHeight / 2 - 20, msg);
+
     iText(screenWidth / 2 - 90, screenHeight / 2 - 40, "Press 'R' to Restart or 'Q' to Quit", GLUT_BITMAP_HELVETICA_18);
+}
+
+void createScoreAnim(int x, int y, int value)
+{
+    for (int i = 0; i < maxScoreAnims; i++)
+    {
+        if (!scoreAnims[i].active)
+        {
+            scoreAnims[i].x = x;
+            scoreAnims[i].y = y;
+            scoreAnims[i].value = value;
+            scoreAnims[i].timer = 30; // ~50 frames = ~0.8 seconds
+            scoreAnims[i].active = true;
+            break;
+        }
+    }
 }
 
 void loadScores()
@@ -863,6 +1083,7 @@ void drawHelpPage()
 
 void iDraw()
 {
+
     iClear();
 
     if (currentMenu == 0)
@@ -1013,7 +1234,7 @@ void iKeyboard(unsigned char key)
     // Name Input Screen
     if (currentMenu == 1)
     {
-        if (key == '\r')
+        if (key == '\r' || key == 13 || key == '\n' || key == 10)
         {
             currentMenu = 2;
             printf("Player Name: %s\n", playerName);
@@ -1040,25 +1261,7 @@ void iKeyboard(unsigned char key)
     // Game screen (shoot)
     else if (currentMenu == 4)
     {
-        if (key == ' ')
-        {
-            int bulletsPerShot = rapidFireActive ? 3 : 1;
-            printf("[DEBUG] Space pressed. Bullets per shot: %d\n", bulletsPerShot);
-
-            int bulletsFired = 0;
-            for (int i = 0; i < maxBullets && bulletsFired < bulletsPerShot; i++)
-            {
-                if (!bulletActive[i])
-                {
-                    bulletX[i] = playerX + 37 + (bulletsFired * 5);
-                    bulletY[i] = playerY + 60;
-                    bulletActive[i] = true;
-                    printf("[DEBUG] Bullet fired at (%d, %d) [slot: %d]\n", bulletX[i], bulletY[i], i);
-                    bulletsFired++;
-                }
-            }
-        }
-
+       
         if (key == 'p')
         {
             isPaused = !isPaused; // Toggle Pause
@@ -1120,40 +1323,22 @@ void iKeyboard(unsigned char key)
     {
         exit(0);
     }
-
-    // Global Quit
-    if (key == 'q')
-    {
-        exit(0);
-    }
 }
 
-void iSpecialKeyboard(unsigned char key)
-{
-    if (currentMenu == 4)
-    {
-        if (key == GLUT_KEY_LEFT && playerX > 0)
-            playerX -= playerSpeed;
-        if (key == GLUT_KEY_RIGHT && playerX < screenWidth - 80)
-            playerX += playerSpeed;
-        if (key == GLUT_KEY_UP && playerY < screenHeight - 100)
-            playerY += playerSpeed;
-        if (key == GLUT_KEY_DOWN && playerY > 0)
-            playerY -= playerSpeed;
-    }
-}
+void iSpecialKeyboard(unsigned char key){}
 
 // Dummy implementations to satisfy linker
 void iMouseDrag(int mx, int my) {}
 void iMouseMove(int mx, int my) {}
 void iMouseWheel(int button, int dir, int mx) {}
 
-int main(int argc, char *argv[]) {
+int main(int argc, char *argv[])
+{
     glutInit(&argc, argv);
+    LoadResources();
+    loadExplosionFrames();
+    iSetTimer(16, gameLoop);
+    iSetTimer(500, spawnEnemy);
     iInitialize(screenWidth, screenHeight, "Space Shooter - Main Menu");
-    iSetTimer(16, gameLoop); 
-    iSetTimer(500, spawnEnemy);   
-    printf("[DEBUG] Main initialized. Timers set.\n");
     return 0;
 }
-
